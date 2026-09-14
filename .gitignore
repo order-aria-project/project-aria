@@ -1,0 +1,20 @@
+__pycache__/
+*.pyc
+
+.env
+.venv/
+venv/
+
+*.log
+
+# Local ARIA data
+memory/data/
+cache/
+snapshots/
+
+# IDE files
+.vscode/
+
+# OS files
+Thumbs.db
+Desktop.ini
