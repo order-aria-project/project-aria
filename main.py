@@ -9,6 +9,8 @@ from core.events import (
     CORE_STARTED,
     CORE_SHUTDOWN,
 )
+from core.command_system import CommandSystem
+from core.commands import hello, system_status
 
 
 # -----------------------------
@@ -85,6 +87,13 @@ def main() -> None:
     # Create ARIA's event system.
     event_bus = EventBus()
 
+    # Create ARIA's command system.
+    command_system = CommandSystem()
+
+    # Register commands.
+    command_system.register("hello", hello)
+    command_system.register("system status", system_status)
+
     # Connect event handlers.
     event_bus.subscribe(
         USER_COMMAND,
@@ -130,7 +139,6 @@ def main() -> None:
         if not command:
             continue
 
-        # Tell the event system that the user spoke.
         event_bus.publish(
             USER_COMMAND,
             command=command
@@ -141,14 +149,10 @@ def main() -> None:
             print("ARIA: Goodbye, Beau.")
             break
 
-        if command.lower() == "hello":
-            response = "Hello, Beau."
-        else:
-            response = f"I heard you say: {command}"
+        response = command_system.execute(command)
 
         print(f"ARIA: {response}")
 
-        # Tell the event system that ARIA responded.
         event_bus.publish(
             ARIA_RESPONSE,
             response=response
