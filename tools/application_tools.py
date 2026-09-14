@@ -9,5 +9,10 @@ class ApplicationTools:
         self.launcher = ApplicationLauncher(registry)
 
     def launch(self, app_name: str) -> str:
-        """Launch a registered application."""
-        return self.launcher.launch(app_name)
+        """
+        Launch a registered application and verify its state.
+        """
+        return self.launcher.launch(
+            app_name,
+            verify=True,
+        )

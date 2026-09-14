@@ -1,3 +1,4 @@
 {
-    "blender": "C:\\Program Files\\Blender Foundation\\Blender 5.2\\blender.exe"
+    "blender": "C:\\Program Files\\Blender Foundation\\Blender 5.2\\blender.exe",
+    "fake_app": "C:\\Definitely\\Does\\Not\\Exist\\fake.exe"
 }
