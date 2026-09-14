@@ -1,6 +1,7 @@
 from pathlib import Path
 from datetime import datetime
 import json
+from core.app_registry import AppRegistry
 
 from core.event_bus import EventBus
 from core.events import (
@@ -83,6 +84,9 @@ def main() -> None:
     settings = load_json(SETTINGS_PATH)
 
     log_path = Path(settings["log_path"])
+
+    registry_path = PROJECT_ROOT / "config" / "applications.json"
+    app_registry = AppRegistry(registry_path)
 
     # Create ARIA's event system.
     event_bus = EventBus()
