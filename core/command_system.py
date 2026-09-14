@@ -13,26 +13,23 @@ class CommandSystem:
         name: str,
         handler: Callable[..., str],
     ) -> None:
-        """Register a command handler."""
+        """Register an exact command."""
         self._commands[name.lower()] = handler
 
     def execute(self, command: str) -> str:
-        """
-        Find and execute a registered command.
-
-        Returns a response string.
-        """
+        """Find and execute a registered command."""
         normalized = command.strip().lower()
 
         if not normalized:
             return ""
 
+        # Exact command.
         handler = self._commands.get(normalized)
 
-        if handler is None:
-            return f"I don't know how to do '{command}'."
+        if handler is not None:
+            try:
+                return handler()
+            except Exception as exc:
+                return f"I couldn't complete that command: {exc}"
 
-        try:
-            return handler()
-        except Exception as exc:
-            return f"I couldn't complete that command: {exc}"
+        return f"I don't know how to do '{command}'."

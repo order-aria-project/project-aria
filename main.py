@@ -1,6 +1,7 @@
 from pathlib import Path
 from datetime import datetime
 import json
+from automation.app_launcher import ApplicationLauncher
 from core.app_registry import AppRegistry
 
 from core.event_bus import EventBus
@@ -87,6 +88,7 @@ def main() -> None:
 
     registry_path = PROJECT_ROOT / "config" / "applications.json"
     app_registry = AppRegistry(registry_path)
+    app_launcher = ApplicationLauncher(app_registry)
 
     # Create ARIA's event system.
     event_bus = EventBus()
@@ -97,6 +99,7 @@ def main() -> None:
     # Register commands.
     command_system.register("hello", hello)
     command_system.register("system status", system_status)
+    command_system.register("open blender",lambda: app_launcher.launch("blender"))
 
     # Connect event handlers.
     event_bus.subscribe(
