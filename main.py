@@ -2,6 +2,14 @@ from pathlib import Path
 from datetime import datetime
 import json
 
+from core.event_bus import EventBus
+from core.events import (
+    USER_COMMAND,
+    ARIA_RESPONSE,
+    CORE_STARTED,
+    CORE_SHUTDOWN,
+)
+
 
 # -----------------------------
 # ARIA PATHS
@@ -27,9 +35,7 @@ def load_json(path: Path) -> dict:
         raise SystemExit(f"Configuration file not found: {path}")
 
     except json.JSONDecodeError as exc:
-        raise SystemExit(
-            f"Invalid JSON in {path}: {exc}"
-        )
+        raise SystemExit(f"Invalid JSON in {path}: {exc}")
 
 
 # -----------------------------
@@ -47,6 +53,26 @@ def log_event(message: str, log_path: Path) -> None:
 
 
 # -----------------------------
+# EVENT HANDLERS
+# -----------------------------
+
+def handle_user_command(command: str, log_path: Path) -> None:
+    log_event(f"USER: {command}", log_path)
+
+
+def handle_aria_response(response: str, log_path: Path) -> None:
+    log_event(f"ARIA: {response}", log_path)
+
+
+def handle_core_started(log_path: Path) -> None:
+    log_event("CORE INITIALIZED", log_path)
+
+
+def handle_core_shutdown(log_path: Path) -> None:
+    log_event("CORE SHUTDOWN", log_path)
+
+
+# -----------------------------
 # MAIN PROGRAM
 # -----------------------------
 
@@ -56,7 +82,32 @@ def main() -> None:
 
     log_path = Path(settings["log_path"])
 
-    log_event("CORE INITIALIZED", log_path)
+    # Create ARIA's event system.
+    event_bus = EventBus()
+
+    # Connect event handlers.
+    event_bus.subscribe(
+        USER_COMMAND,
+        lambda command: handle_user_command(command, log_path)
+    )
+
+    event_bus.subscribe(
+        ARIA_RESPONSE,
+        lambda response: handle_aria_response(response, log_path)
+    )
+
+    event_bus.subscribe(
+        CORE_STARTED,
+        lambda: handle_core_started(log_path)
+    )
+
+    event_bus.subscribe(
+        CORE_SHUTDOWN,
+        lambda: handle_core_shutdown(log_path)
+    )
+
+    # Announce startup.
+    event_bus.publish(CORE_STARTED)
 
     print("=" * 50)
     print(f"{profile['name']} — {profile['version']}")
@@ -72,28 +123,36 @@ def main() -> None:
             command = input("You: ").strip()
 
         except (KeyboardInterrupt, EOFError):
-            log_event("CORE SHUTDOWN", log_path)
+            event_bus.publish(CORE_SHUTDOWN)
             print("\nARIA: Goodbye, Beau.")
             break
 
         if not command:
             continue
 
-        log_event(f"USER: {command}", log_path)
+        # Tell the event system that the user spoke.
+        event_bus.publish(
+            USER_COMMAND,
+            command=command
+        )
 
         if command.lower() in {"exit", "quit"}:
-            log_event("CORE SHUTDOWN", log_path)
+            event_bus.publish(CORE_SHUTDOWN)
             print("ARIA: Goodbye, Beau.")
             break
 
         if command.lower() == "hello":
             response = "Hello, Beau."
-
         else:
             response = f"I heard you say: {command}"
 
         print(f"ARIA: {response}")
-        log_event(f"ARIA: {response}", log_path)
+
+        # Tell the event system that ARIA responded.
+        event_bus.publish(
+            ARIA_RESPONSE,
+            response=response
+        )
 
 
 if __name__ == "__main__":
