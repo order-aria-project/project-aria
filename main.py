@@ -17,6 +17,15 @@ from core.conversation_manager import ConversationManager
 
 from tools.application_tools import ApplicationTools
 from tools.calculator_tools import calculate
+from tools.system_tools import (
+    get_cpu_usage,
+    get_ram_usage,
+    get_gpu_info,
+    get_disk_space,
+    get_battery,
+    get_running_applications,
+    get_system_status,
+)
 
 
 # -----------------------------
@@ -40,10 +49,14 @@ def load_json(path: Path) -> dict:
             return json.load(file)
 
     except FileNotFoundError:
-        raise SystemExit(f"Configuration file not found: {path}")
+        raise SystemExit(
+            f"Configuration file not found: {path}"
+        )
 
     except json.JSONDecodeError as exc:
-        raise SystemExit(f"Invalid JSON in {path}: {exc}")
+        raise SystemExit(
+            f"Invalid JSON in {path}: {exc}"
+        )
 
 
 # -----------------------------
@@ -52,12 +65,22 @@ def load_json(path: Path) -> dict:
 
 def log_event(message: str, log_path: Path) -> None:
     """Write an event to ARIA's Mission Log."""
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    timestamp = datetime.now().strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
 
-    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
 
-    with log_path.open("a", encoding="utf-8") as log_file:
-        log_file.write(f"[{timestamp}] {message}\n")
+    with log_path.open(
+        "a",
+        encoding="utf-8",
+    ) as log_file:
+        log_file.write(
+            f"[{timestamp}] {message}\n"
+        )
 
 
 # -----------------------------
@@ -68,7 +91,9 @@ def main() -> None:
     profile = load_json(PROFILE_PATH)
     settings = load_json(SETTINGS_PATH)
 
-    log_path = Path(settings["log_path"])
+    log_path = Path(
+        settings["log_path"]
+    )
 
     # -------------------------
     # Event Bus
@@ -112,15 +137,23 @@ def main() -> None:
     # Application Registry
     # -------------------------
 
-    registry_path = PROJECT_ROOT / "config" / "applications.json"
+    registry_path = (
+        PROJECT_ROOT
+        / "config"
+        / "applications.json"
+    )
 
-    app_registry = AppRegistry(registry_path)
+    app_registry = AppRegistry(
+        registry_path
+    )
 
     # -------------------------
     # Application Tools
     # -------------------------
 
-    application_tools = ApplicationTools(app_registry)
+    application_tools = ApplicationTools(
+        app_registry
+    )
 
     # -------------------------
     # Tool Router
@@ -136,6 +169,41 @@ def main() -> None:
     tool_router.register(
         "calculate",
         calculate,
+    )
+
+    tool_router.register(
+        "get_cpu_usage",
+        get_cpu_usage,
+    )
+
+    tool_router.register(
+        "get_ram_usage",
+        get_ram_usage,
+    )
+
+    tool_router.register(
+        "get_gpu_info",
+        get_gpu_info,
+    )
+
+    tool_router.register(
+        "get_disk_space",
+        get_disk_space,
+    )
+
+    tool_router.register(
+        "get_battery",
+        get_battery,
+    )
+
+    tool_router.register(
+        "get_running_applications",
+        get_running_applications,
+    )
+
+    tool_router.register(
+        "get_system_status",
+        get_system_status,
     )
 
     # -------------------------
@@ -156,18 +224,33 @@ def main() -> None:
     # Startup
     # -------------------------
 
-    event_bus.publish(CORE_STARTED)
+    event_bus.publish(
+        CORE_STARTED
+    )
 
     print("=" * 60)
-    print(f"{profile['name']} — {profile['version']}")
-    print(f"Meaning: {profile['meaning']}")
-    print(f"Owner: {profile['owner']}")
-    print(f"Build: {profile['build']}")
+    print(
+        f"{profile['name']} — "
+        f"{profile['version']}"
+    )
+    print(
+        f"Meaning: "
+        f"{profile['meaning']}"
+    )
+    print(
+        f"Owner: "
+        f"{profile['owner']}"
+    )
+    print(
+        f"Build: "
+        f"{profile['build']}"
+    )
     print("=" * 60)
     print("CORE ONLINE")
     print("AI ONLINE")
     print("TOOLS ONLINE")
     print("MEMORY ONLINE")
+    print("SYSTEM AWARENESS ONLINE")
     print("=" * 60)
 
     # -------------------------
@@ -176,19 +259,39 @@ def main() -> None:
 
     while True:
         try:
-            user_input = input("You: ").strip()
+            user_input = input(
+                "You: "
+            ).strip()
 
-        except (KeyboardInterrupt, EOFError):
-            event_bus.publish(CORE_SHUTDOWN)
-            print("\nARIA: Goodbye, Beau.")
+        except (
+            KeyboardInterrupt,
+            EOFError,
+        ):
+            event_bus.publish(
+                CORE_SHUTDOWN
+            )
+
+            print(
+                "\nARIA: Goodbye, Beau."
+            )
+
             break
 
         if not user_input:
             continue
 
-        if user_input.lower() in {"exit", "quit"}:
-            event_bus.publish(CORE_SHUTDOWN)
-            print("ARIA: Goodbye, Beau.")
+        if user_input.lower() in {
+            "exit",
+            "quit",
+        }:
+            event_bus.publish(
+                CORE_SHUTDOWN
+            )
+
+            print(
+                "ARIA: Goodbye, Beau."
+            )
+
             break
 
         # -------------------------
@@ -218,7 +321,9 @@ def main() -> None:
                 response.message.content or ""
             )
 
-            tool_calls = response.message.tool_calls
+            tool_calls = (
+                response.message.tool_calls
+            )
 
             # -------------------------
             # No Tool Required
@@ -230,7 +335,8 @@ def main() -> None:
                 )
 
                 print(
-                    f"ARIA: {assistant_content}"
+                    f"ARIA: "
+                    f"{assistant_content}"
                 )
 
                 event_bus.publish(
@@ -262,30 +368,43 @@ def main() -> None:
             # -------------------------
 
             for call in tool_calls:
-                tool_name = call.function.name
-                arguments = call.function.arguments
+                tool_name = (
+                    call.function.name
+                )
+
+                arguments = (
+                    call.function.arguments
+                )
 
                 log_event(
-                    f"TOOL REQUEST: {tool_name} {arguments}",
+                    f"TOOL REQUEST: "
+                    f"{tool_name} "
+                    f"{arguments}",
                     log_path,
                 )
 
                 print(
-                    f"[TOOL] {tool_name}({arguments})"
+                    f"[TOOL] "
+                    f"{tool_name}"
+                    f"({arguments})"
                 )
 
-                result = tool_router.execute(
-                    tool_name,
-                    arguments,
+                result = (
+                    tool_router.execute(
+                        tool_name,
+                        arguments,
+                    )
                 )
 
                 log_event(
-                    f"TOOL RESULT: {result}",
+                    f"TOOL RESULT: "
+                    f"{result}",
                     log_path,
                 )
 
                 print(
-                    f"[TOOL RESULT] {result}"
+                    f"[TOOL RESULT] "
+                    f"{result}"
                 )
 
                 conversation.add_tool_result(
@@ -301,7 +420,8 @@ def main() -> None:
             )
 
             final_content = (
-                final_response.message.content or ""
+                final_response.message.content
+                or ""
             )
 
             conversation.add_assistant_message(
@@ -309,7 +429,8 @@ def main() -> None:
             )
 
             print(
-                f"ARIA: {final_content}"
+                f"ARIA: "
+                f"{final_content}"
             )
 
             event_bus.publish(
@@ -324,7 +445,8 @@ def main() -> None:
             )
 
             print(
-                f"ARIA: {error_message}"
+                f"ARIA: "
+                f"{error_message}"
             )
 
             log_event(
