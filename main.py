@@ -1,6 +1,7 @@
 from pathlib import Path
 from datetime import datetime
 import json
+import threading
 from typing import Any
 
 from core.ai_brain import AIBrain
@@ -27,6 +28,9 @@ from tools.system_tools import (
     get_system_status,
 )
 
+from voice.speech_listener import SpeechListener
+from voice.voice_controller import VoiceController
+
 
 # -----------------------------
 # ARIA PATHS
@@ -34,8 +38,17 @@ from tools.system_tools import (
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 
-PROFILE_PATH = PROJECT_ROOT / "core" / "aria_profile.json"
-SETTINGS_PATH = PROJECT_ROOT / "config" / "settings.json"
+PROFILE_PATH = (
+    PROJECT_ROOT
+    / "core"
+    / "aria_profile.json"
+)
+
+SETTINGS_PATH = (
+    PROJECT_ROOT
+    / "config"
+    / "settings.json"
+)
 
 
 # -----------------------------
@@ -44,8 +57,12 @@ SETTINGS_PATH = PROJECT_ROOT / "config" / "settings.json"
 
 def load_json(path: Path) -> dict:
     """Load a JSON file safely."""
+
     try:
-        with path.open("r", encoding="utf-8") as file:
+        with path.open(
+            "r",
+            encoding="utf-8",
+        ) as file:
             return json.load(file)
 
     except FileNotFoundError:
@@ -63,8 +80,12 @@ def load_json(path: Path) -> dict:
 # MISSION LOGGER
 # -----------------------------
 
-def log_event(message: str, log_path: Path) -> None:
+def log_event(
+    message: str,
+    log_path: Path,
+) -> None:
     """Write an event to ARIA's Mission Log."""
+
     timestamp = datetime.now().strftime(
         "%Y-%m-%d %H:%M:%S"
     )
@@ -78,9 +99,195 @@ def log_event(message: str, log_path: Path) -> None:
         "a",
         encoding="utf-8",
     ) as log_file:
+
         log_file.write(
             f"[{timestamp}] {message}\n"
         )
+
+
+# -----------------------------
+# VOICE PROCESSING
+# -----------------------------
+
+def process_voice_command(
+    user_input: str,
+    event_bus: EventBus,
+    conversation: ConversationManager,
+    brain: AIBrain,
+    tool_router: ToolRouter,
+    log_path: Path,
+) -> str:
+    """
+    Send a recognized voice command through the exact
+    same ARIA pipeline used by keyboard commands.
+    """
+
+    event_bus.publish(
+        USER_COMMAND,
+        command=user_input,
+    )
+
+    conversation.add_user_message(
+        user_input
+    )
+
+    try:
+
+        # -------------------------
+        # First AI Request
+        # -------------------------
+
+        response = brain.ask(
+            conversation.get_messages(),
+            tools=tool_router.get_tools(),
+        )
+
+        assistant_content = (
+            response.message.content
+            or ""
+        )
+
+        tool_calls = (
+            response.message.tool_calls
+        )
+
+        # -------------------------
+        # No Tool Required
+        # -------------------------
+
+        if not tool_calls:
+
+            conversation.add_assistant_message(
+                assistant_content
+            )
+
+            print(
+                f"ARIA: {assistant_content}"
+            )
+
+            event_bus.publish(
+                ARIA_RESPONSE,
+                response=assistant_content,
+            )
+
+            return assistant_content
+
+        # -------------------------
+        # Record Assistant Tool Call
+        # -------------------------
+
+        conversation.add_assistant_message(
+            assistant_content,
+            tool_calls=[
+                {
+                    "function": {
+                        "name": call.function.name,
+                        "arguments": call.function.arguments,
+                    }
+                }
+                for call in tool_calls
+            ],
+        )
+
+        # -------------------------
+        # Execute Tools
+        # -------------------------
+
+        for call in tool_calls:
+
+            tool_name = (
+                call.function.name
+            )
+
+            arguments = (
+                call.function.arguments
+            )
+
+            log_event(
+                (
+                    f"TOOL REQUEST: "
+                    f"{tool_name} "
+                    f"{arguments}"
+                ),
+                log_path,
+            )
+
+            print(
+                f"[TOOL] "
+                f"{tool_name}"
+                f"({arguments})"
+            )
+
+            result = (
+                tool_router.execute(
+                    tool_name,
+                    arguments,
+                )
+            )
+
+            log_event(
+                f"TOOL RESULT: {result}",
+                log_path,
+            )
+
+            print(
+                f"[TOOL RESULT] {result}"
+            )
+
+            conversation.add_tool_result(
+                result
+            )
+
+        # -------------------------
+        # Final AI Response
+        # -------------------------
+
+        final_response = brain.ask(
+            conversation.get_messages()
+        )
+
+        final_content = (
+            final_response.message.content
+            or ""
+        )
+
+        conversation.add_assistant_message(
+            final_content
+        )
+
+        print(
+            f"ARIA: {final_content}"
+        )
+
+        event_bus.publish(
+            ARIA_RESPONSE,
+            response=final_content,
+        )
+
+        return final_content
+
+    except Exception as exc:
+
+        error_message = (
+            "I encountered an error while "
+            f"processing that: {exc}"
+        )
+
+        print(
+            f"ARIA: {error_message}"
+        )
+
+        log_event(
+            f"ERROR: {exc}",
+            log_path,
+        )
+
+        event_bus.publish(
+            ARIA_RESPONSE,
+            response=error_message,
+        )
+
+        return error_message
 
 
 # -----------------------------
@@ -88,8 +295,14 @@ def log_event(message: str, log_path: Path) -> None:
 # -----------------------------
 
 def main() -> None:
-    profile = load_json(PROFILE_PATH)
-    settings = load_json(SETTINGS_PATH)
+
+    profile = load_json(
+        PROFILE_PATH
+    )
+
+    settings = load_json(
+        SETTINGS_PATH
+    )
 
     log_path = Path(
         settings["log_path"]
@@ -221,6 +434,32 @@ def main() -> None:
     )
 
     # -------------------------
+    # Voice
+    # -------------------------
+
+    speech_listener = SpeechListener(
+        model_path=(
+            PROJECT_ROOT
+            / "voice"
+            / "model-whisper-small-en"
+        )
+    )
+
+    voice_controller = VoiceController(
+        command_callback=lambda command: process_voice_command(
+            command,
+            event_bus,
+            conversation,
+            brain,
+            tool_router,
+            log_path,
+        ),
+        speech_listener=speech_listener,
+    )
+
+    voice_thread: threading.Thread | None = None
+
+    # -------------------------
     # Startup
     # -------------------------
 
@@ -229,235 +468,178 @@ def main() -> None:
     )
 
     print("=" * 60)
+
     print(
         f"{profile['name']} — "
         f"{profile['version']}"
     )
+
     print(
         f"Meaning: "
         f"{profile['meaning']}"
     )
+
     print(
         f"Owner: "
         f"{profile['owner']}"
     )
+
     print(
         f"Build: "
         f"{profile['build']}"
     )
+
     print("=" * 60)
     print("CORE ONLINE")
     print("AI ONLINE")
     print("TOOLS ONLINE")
     print("MEMORY ONLINE")
     print("SYSTEM AWARENESS ONLINE")
+    print("VOICE ONLINE")
     print("=" * 60)
+
+    print(
+        "Say 'ARIA' followed by a command."
+    )
+
+    print(
+        "Type 'voice' for manual voice input."
+    )
+
+    # -------------------------
+    # Start Hands-Free Voice
+    # -------------------------
+
+    voice_thread = threading.Thread(
+        target=voice_controller.start,
+        name="ARIA-VoiceController",
+        daemon=True,
+    )
+
+    voice_thread.start()
 
     # -------------------------
     # Main Conversation Loop
     # -------------------------
 
-    while True:
-        try:
-            user_input = input(
-                "You: "
-            ).strip()
+    try:
 
-        except (
-            KeyboardInterrupt,
-            EOFError,
-        ):
-            event_bus.publish(
-                CORE_SHUTDOWN
-            )
+        while True:
 
-            print(
-                "\nARIA: Goodbye, Beau."
-            )
+            try:
 
-            break
+                user_input = input(
+                    "You: "
+                ).strip()
 
-        if not user_input:
-            continue
+            except (
+                KeyboardInterrupt,
+                EOFError,
+            ):
 
-        if user_input.lower() in {
-            "exit",
-            "quit",
-        }:
-            event_bus.publish(
-                CORE_SHUTDOWN
-            )
-
-            print(
-                "ARIA: Goodbye, Beau."
-            )
-
-            break
-
-        # -------------------------
-        # Store User Message
-        # -------------------------
-
-        event_bus.publish(
-            USER_COMMAND,
-            command=user_input,
-        )
-
-        conversation.add_user_message(
-            user_input
-        )
-
-        try:
-            # -------------------------
-            # First AI Request
-            # -------------------------
-
-            response = brain.ask(
-                conversation.get_messages(),
-                tools=tool_router.get_tools(),
-            )
-
-            assistant_content = (
-                response.message.content or ""
-            )
-
-            tool_calls = (
-                response.message.tool_calls
-            )
-
-            # -------------------------
-            # No Tool Required
-            # -------------------------
-
-            if not tool_calls:
-                conversation.add_assistant_message(
-                    assistant_content
+                event_bus.publish(
+                    CORE_SHUTDOWN
                 )
 
                 print(
-                    f"ARIA: "
-                    f"{assistant_content}"
+                    "\nARIA: Goodbye, Beau."
                 )
 
+                break
+
+            if not user_input:
+                continue
+
+            if user_input.lower() in {
+                "exit",
+                "quit",
+            }:
+
                 event_bus.publish(
-                    ARIA_RESPONSE,
-                    response=assistant_content,
+                    CORE_SHUTDOWN
                 )
+
+                print(
+                    "ARIA: Goodbye, Beau."
+                )
+
+                break
+
+            # -------------------------
+            # Manual Voice Command
+            # -------------------------
+
+            if user_input.lower() in {
+                "voice",
+                "listen",
+                "voice command",
+            }:
+
+                try:
+
+                    voice_command = (
+                        speech_listener.listen_once()
+                    )
+
+                    if not voice_command:
+
+                        print(
+                            "ARIA: "
+                            "I didn't catch that."
+                        )
+
+                        continue
+
+                    print(
+                        f"[VOICE] Heard: "
+                        f"{voice_command}"
+                    )
+
+                    process_voice_command(
+                        voice_command,
+                        event_bus,
+                        conversation,
+                        brain,
+                        tool_router,
+                        log_path,
+                    )
+
+                except Exception as exc:
+
+                    print(
+                        "ARIA: Voice input failed: "
+                        f"{exc}"
+                    )
 
                 continue
 
             # -------------------------
-            # Record Assistant Tool Call
+            # Normal Keyboard Command
             # -------------------------
 
-            conversation.add_assistant_message(
-                assistant_content,
-                tool_calls=[
-                    {
-                        "function": {
-                            "name": call.function.name,
-                            "arguments": call.function.arguments,
-                        }
-                    }
-                    for call in tool_calls
-                ],
-            )
-
-            # -------------------------
-            # Execute Tools
-            # -------------------------
-
-            for call in tool_calls:
-                tool_name = (
-                    call.function.name
-                )
-
-                arguments = (
-                    call.function.arguments
-                )
-
-                log_event(
-                    f"TOOL REQUEST: "
-                    f"{tool_name} "
-                    f"{arguments}",
-                    log_path,
-                )
-
-                print(
-                    f"[TOOL] "
-                    f"{tool_name}"
-                    f"({arguments})"
-                )
-
-                result = (
-                    tool_router.execute(
-                        tool_name,
-                        arguments,
-                    )
-                )
-
-                log_event(
-                    f"TOOL RESULT: "
-                    f"{result}",
-                    log_path,
-                )
-
-                print(
-                    f"[TOOL RESULT] "
-                    f"{result}"
-                )
-
-                conversation.add_tool_result(
-                    result
-                )
-
-            # -------------------------
-            # Final AI Response
-            # -------------------------
-
-            final_response = brain.ask(
-                conversation.get_messages()
-            )
-
-            final_content = (
-                final_response.message.content
-                or ""
-            )
-
-            conversation.add_assistant_message(
-                final_content
-            )
-
-            print(
-                f"ARIA: "
-                f"{final_content}"
-            )
-
-            event_bus.publish(
-                ARIA_RESPONSE,
-                response=final_content,
-            )
-
-        except Exception as exc:
-            error_message = (
-                "I encountered an error while "
-                f"processing that: {exc}"
-            )
-
-            print(
-                f"ARIA: "
-                f"{error_message}"
-            )
-
-            log_event(
-                f"ERROR: {exc}",
+            process_voice_command(
+                user_input,
+                event_bus,
+                conversation,
+                brain,
+                tool_router,
                 log_path,
             )
 
-            event_bus.publish(
-                ARIA_RESPONSE,
-                response=error_message,
-            )
+    finally:
+
+        # Stop voice loop first.
+        voice_controller.stop()
+
+        # Release Whisper resources.
+        try:
+            speech_listener.close()
+        except Exception:
+            pass
+
+        event_bus.publish(
+            CORE_SHUTDOWN
+        )
 
 
 if __name__ == "__main__":

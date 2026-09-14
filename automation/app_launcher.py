@@ -1,114 +1,84 @@
-from pathlib import Path
-import subprocess
-import time
+from __future__ import annotations
 
-import psutil
+import os
+import subprocess
+from pathlib import Path
 
 from core.app_registry import AppRegistry
 
 
 class ApplicationLauncher:
-    """Launches applications registered with ARIA."""
+    """Launches registered Windows applications."""
 
-    def __init__(self, registry: AppRegistry) -> None:
-        self.registry = registry
+    def __init__(self, app_registry: AppRegistry) -> None:
+        self.app_registry = app_registry
 
-    def launch(
-        self,
-        app_name: str,
-        verify: bool = True,
-    ) -> str:
-        """
-        Launch a registered application and optionally verify it started.
-
-        Args:
-            app_name: Registered application name.
-            verify: Whether to verify the process started.
-
-        Returns:
-            A detailed result describing what happened.
-        """
-
-        executable = self.registry.get(app_name)
+    def launch(self, app_name: str) -> str:
+        executable = self.app_registry.get(app_name)
 
         if not executable:
             return (
-                f"STATUS=NOT_FOUND; "
-                f"message=I don't know where {app_name} is installed."
+                "STATUS=NOT_FOUND "
+                f"Application '{app_name}' is not registered."
             )
 
-        executable_path = Path(executable)
+        executable_path = Path(
+            os.path.expandvars(
+                os.path.expanduser(executable)
+            )
+        )
 
         if not executable_path.exists():
             return (
-                f"STATUS=NOT_FOUND; "
-                f"message=The registered executable for {app_name} "
-                f"does not exist at {executable_path}."
+                "STATUS=NOT_FOUND "
+                f"Executable does not exist: {executable_path}"
+            )
+
+        if not executable_path.is_file():
+            return (
+                "STATUS=NOT_FOUND "
+                f"Executable path is not a file: {executable_path}"
             )
 
         try:
-            process = subprocess.Popen(
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = subprocess.SW_HIDE
+
+            subprocess.Popen(
                 [str(executable_path)],
+                stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
-                stdin=subprocess.DEVNULL,
-                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+                startupinfo=startupinfo,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+                close_fds=True,
+            )
+
+        except FileNotFoundError:
+            return (
+                "STATUS=NOT_FOUND "
+                f"Windows could not find: {executable_path}"
             )
 
         except OSError as exc:
             return (
-                f"STATUS=FAILED; "
-                f"message=Windows could not start {app_name}: {exc}"
+                "STATUS=FAILED "
+                f"Windows failed to launch "
+                f"'{app_name}': {exc}"
             )
 
-        if not verify:
+        except Exception as exc:
             return (
-                f"STATUS=STARTED; "
-                f"message={app_name} launch command was accepted."
+                "STATUS=FAILED "
+                f"Unexpected error launching "
+                f"'{app_name}': {exc}"
             )
-
-        # Give the application a moment to create its process.
-        time.sleep(1.0)
-
-        # First check the process ID we got from Windows.
-        if process.poll() is None:
-            return (
-                f"STATUS=RUNNING; "
-                f"message={app_name} started successfully; "
-                f"pid={process.pid}."
-            )
-
-        # Fallback: search by executable name.
-        executable_name = executable_path.name.lower()
-
-        for candidate in psutil.process_iter(["name", "exe"]):
-            try:
-                process_name = (
-                    candidate.info.get("name") or ""
-                ).lower()
-
-                process_exe = (
-                    candidate.info.get("exe") or ""
-                ).lower()
-
-                if (
-                    process_name == executable_name
-                    or process_exe == str(executable_path).lower()
-                ):
-                    return (
-                        f"STATUS=RUNNING; "
-                        f"message={app_name} is running."
-                    )
-
-            except (
-                psutil.NoSuchProcess,
-                psutil.AccessDenied,
-            ):
-                continue
 
         return (
-            f"STATUS=UNKNOWN; "
-            f"message=The launch request for {app_name} "
-            f"was accepted, but I could not confirm that "
-            f"the application is still running."
+            "STATUS=STARTED "
+            f"'{app_name}' was launched successfully."
         )
+
+    def open(self, app_name: str) -> str:
+        return self.launch(app_name)
