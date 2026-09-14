@@ -13,6 +13,8 @@ from core.events import (
     CORE_STARTED,
     CORE_SHUTDOWN,
 )
+from core.conversation_manager import ConversationManager
+
 from tools.application_tools import ApplicationTools
 from tools.calculator_tools import calculate
 
@@ -142,8 +144,13 @@ def main() -> None:
 
     brain = AIBrain()
 
-    # Conversation history.
-    messages: list[dict[str, Any]] = []
+    # -------------------------
+    # Conversation Manager
+    # -------------------------
+
+    conversation = ConversationManager(
+        max_messages=20
+    )
 
     # -------------------------
     # Startup
@@ -160,6 +167,7 @@ def main() -> None:
     print("CORE ONLINE")
     print("AI ONLINE")
     print("TOOLS ONLINE")
+    print("MEMORY ONLINE")
     print("=" * 60)
 
     # -------------------------
@@ -183,45 +191,47 @@ def main() -> None:
             print("ARIA: Goodbye, Beau.")
             break
 
-        # Record the user message.
+        # -------------------------
+        # Store User Message
+        # -------------------------
+
         event_bus.publish(
             USER_COMMAND,
             command=user_input,
         )
 
-        messages.append(
-            {
-                "role": "user",
-                "content": user_input,
-            }
+        conversation.add_user_message(
+            user_input
         )
 
         try:
-            # --------------------------------
-            # Ask the AI what to do.
-            # --------------------------------
+            # -------------------------
+            # First AI Request
+            # -------------------------
 
             response = brain.ask(
-                messages,
+                conversation.get_messages(),
                 tools=tool_router.get_tools(),
             )
 
-            assistant_content = response.message.content or ""
+            assistant_content = (
+                response.message.content or ""
+            )
+
             tool_calls = response.message.tool_calls
 
-            # --------------------------------
-            # No tool required.
-            # --------------------------------
+            # -------------------------
+            # No Tool Required
+            # -------------------------
 
             if not tool_calls:
-                messages.append(
-                    {
-                        "role": "assistant",
-                        "content": assistant_content,
-                    }
+                conversation.add_assistant_message(
+                    assistant_content
                 )
 
-                print(f"ARIA: {assistant_content}")
+                print(
+                    f"ARIA: {assistant_content}"
+                )
 
                 event_bus.publish(
                     ARIA_RESPONSE,
@@ -230,14 +240,13 @@ def main() -> None:
 
                 continue
 
-            # --------------------------------
-            # Record the AI's tool request.
-            # --------------------------------
+            # -------------------------
+            # Record Assistant Tool Call
+            # -------------------------
 
-            assistant_message = {
-                "role": "assistant",
-                "content": assistant_content,
-                "tool_calls": [
+            conversation.add_assistant_message(
+                assistant_content,
+                tool_calls=[
                     {
                         "function": {
                             "name": call.function.name,
@@ -246,13 +255,11 @@ def main() -> None:
                     }
                     for call in tool_calls
                 ],
-            }
+            )
 
-            messages.append(assistant_message)
-
-            # --------------------------------
-            # Execute tools.
-            # --------------------------------
+            # -------------------------
+            # Execute Tools
+            # -------------------------
 
             for call in tool_calls:
                 tool_name = call.function.name
@@ -281,31 +288,29 @@ def main() -> None:
                     f"[TOOL RESULT] {result}"
                 )
 
-                messages.append(
-                    {
-                        "role": "tool",
-                        "content": result,
-                    }
+                conversation.add_tool_result(
+                    result
                 )
 
-            # --------------------------------
-            # Ask Qwen for the final response.
-            # --------------------------------
+            # -------------------------
+            # Final AI Response
+            # -------------------------
 
-            final_response = brain.ask(messages)
+            final_response = brain.ask(
+                conversation.get_messages()
+            )
 
             final_content = (
                 final_response.message.content or ""
             )
 
-            messages.append(
-                {
-                    "role": "assistant",
-                    "content": final_content,
-                }
+            conversation.add_assistant_message(
+                final_content
             )
 
-            print(f"ARIA: {final_content}")
+            print(
+                f"ARIA: {final_content}"
+            )
 
             event_bus.publish(
                 ARIA_RESPONSE,
@@ -314,10 +319,13 @@ def main() -> None:
 
         except Exception as exc:
             error_message = (
-                f"I encountered an error while processing that: {exc}"
+                "I encountered an error while "
+                f"processing that: {exc}"
             )
 
-            print(f"ARIA: {error_message}")
+            print(
+                f"ARIA: {error_message}"
+            )
 
             log_event(
                 f"ERROR: {exc}",
