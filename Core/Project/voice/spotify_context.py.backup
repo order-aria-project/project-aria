@@ -1,0 +1,345 @@
+from __future__ import annotations
+
+import base64
+import hashlib
+import json
+import os
+import secrets
+import threading
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+import webbrowser
+from dataclasses import dataclass, asdict
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
+from typing import Any, Optional
+
+
+SPOTIFY_ACCOUNTS = "https://accounts.spotify.com"
+SPOTIFY_API = "https://api.spotify.com/v1"
+DEFAULT_REDIRECT_URI = "http://127.0.0.1:8888/callback"
+DEFAULT_SCOPES = "user-read-currently-playing user-read-playback-state"
+
+
+@dataclass(slots=True)
+class SpotifyPlayback:
+    is_playing: bool = False
+    track_id: str = ""
+    track_name: str = ""
+    artist_names: tuple[str, ...] = ()
+    album_name: str = ""
+    progress_ms: int = 0
+    duration_ms: int = 0
+    device_name: str = ""
+    device_type: str = ""
+    item_type: str = "track"
+    fetched_at: float = 0.0
+
+    @property
+    def seconds_into_track(self) -> float:
+        return self.progress_ms / 1000.0
+
+    @property
+    def duration_seconds(self) -> float:
+        return self.duration_ms / 1000.0
+
+    @property
+    def identity(self) -> str:
+        if self.track_id:
+            return self.track_id
+        if self.track_name:
+            return f"{self.track_name}|{','.join(self.artist_names)}"
+        return ""
+
+    def is_recent(self, max_age: float = 6.0) -> bool:
+        return bool(self.fetched_at) and (time.monotonic() - self.fetched_at) <= max_age
+
+
+class _CallbackHandler(BaseHTTPRequestHandler):
+    result: dict[str, str] = {}
+    event: Optional[threading.Event] = None
+
+    def do_GET(self) -> None:  # noqa: N802
+        parsed = urllib.parse.urlparse(self.path)
+        params = urllib.parse.parse_qs(parsed.query)
+        _CallbackHandler.result = {
+            "code": params.get("code", [""])[0],
+            "state": params.get("state", [""])[0],
+            "error": params.get("error", [""])[0],
+        }
+        body = (
+            "<html><head><title>ARIA Spotify</title></head>"
+            "<body><h2>Spotify connected.</h2>"
+            "<p>You can close this window and return to ARIA.</p></body></html>"
+        )
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(body.encode("utf-8"))
+        if _CallbackHandler.event is not None:
+            _CallbackHandler.event.set()
+
+    def log_message(self, format: str, *args: Any) -> None:
+        return
+
+
+class SpotifyContext:
+    """
+    Local Spotify Web API integration for ARIA's attention engine.
+
+    Deliberately limited to playback metadata. Lyrics are not fetched from Spotify
+    and are never sent to an LLM. The module exposes stable metadata so a separate,
+    deterministic lyric-matching layer can use a licensed/local lyrics source later.
+    """
+
+    def __init__(
+        self,
+        client_id: Optional[str] = None,
+        redirect_uri: str = DEFAULT_REDIRECT_URI,
+        token_path: Optional[Path] = None,
+        scopes: str = DEFAULT_SCOPES,
+        timeout: float = 5.0,
+    ) -> None:
+        self.client_id = client_id or os.getenv("ARIA_SPOTIFY_CLIENT_ID", "").strip()
+        self.redirect_uri = redirect_uri
+        self.scopes = scopes
+        self.timeout = timeout
+        self.token_path = token_path or (
+            Path(os.getenv("APPDATA", Path.home() / "AppData/Roaming"))
+            / "ARIA"
+            / "spotify_token.json"
+        )
+        self._lock = threading.RLock()
+        self._cached_playback: Optional[SpotifyPlayback] = None
+        self._cached_at = 0.0
+        self._token: dict[str, Any] = {}
+        self._load_token()
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.client_id)
+
+    @property
+    def authorized(self) -> bool:
+        with self._lock:
+            return bool(self._token.get("access_token"))
+
+    def status(self) -> dict[str, Any]:
+        return {
+            "configured": self.configured,
+            "authorized": self.authorized,
+            "token_path": str(self.token_path),
+            "redirect_uri": self.redirect_uri,
+            "scopes": self.scopes.split(),
+        }
+
+    def _load_token(self) -> None:
+        try:
+            if self.token_path.exists():
+                self._token = json.loads(self.token_path.read_text(encoding="utf-8"))
+        except Exception:
+            self._token = {}
+
+    def _save_token(self) -> None:
+        self.token_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.token_path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(self._token, indent=2), encoding="utf-8")
+        tmp.replace(self.token_path)
+
+    @staticmethod
+    def _pkce_pair() -> tuple[str, str]:
+        verifier = secrets.token_urlsafe(64)
+        verifier = verifier[:128]
+        digest = hashlib.sha256(verifier.encode("ascii")).digest()
+        challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+        return verifier, challenge
+
+    def authorize(self, timeout: float = 180.0) -> bool:
+        if not self.configured:
+            raise RuntimeError(
+                "ARIA_SPOTIFY_CLIENT_ID is not configured. Create a Spotify Web API app and set the client ID."
+            )
+
+        verifier, challenge = self._pkce_pair()
+        state = secrets.token_urlsafe(24)
+        event = threading.Event()
+        _CallbackHandler.result = {}
+        _CallbackHandler.event = event
+
+        auth_query = urllib.parse.urlencode(
+            {
+                "client_id": self.client_id,
+                "response_type": "code",
+                "redirect_uri": self.redirect_uri,
+                "scope": self.scopes,
+                "state": state,
+                "code_challenge_method": "S256",
+                "code_challenge": challenge,
+                "show_dialog": "false",
+            }
+        )
+        url = f"{SPOTIFY_ACCOUNTS}/authorize?{auth_query}"
+
+        host = urllib.parse.urlparse(self.redirect_uri).hostname or "127.0.0.1"
+        port = urllib.parse.urlparse(self.redirect_uri).port or 8888
+        server = HTTPServer((host, port), _CallbackHandler)
+        server.timeout = 0.5
+
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            webbrowser.open(url)
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline and not event.is_set():
+                server.handle_request()
+                if _CallbackHandler.result:
+                    break
+
+            result = dict(_CallbackHandler.result)
+            if result.get("error"):
+                raise RuntimeError(f"Spotify authorization failed: {result['error']}")
+            if result.get("state") != state:
+                raise RuntimeError("Spotify authorization state mismatch.")
+            if not result.get("code"):
+                raise RuntimeError("Spotify authorization timed out or returned no code.")
+
+            token_payload = self._token_request(
+                {
+                    "grant_type": "authorization_code",
+                    "code": result["code"],
+                    "redirect_uri": self.redirect_uri,
+                    "client_id": self.client_id,
+                    "code_verifier": verifier,
+                }
+            )
+            with self._lock:
+                self._token = token_payload
+                self._token["obtained_at"] = time.time()
+                self._save_token()
+            return True
+        finally:
+            _CallbackHandler.event = None
+            server.shutdown()
+            server.server_close()
+
+    def _token_request(self, form: dict[str, str]) -> dict[str, Any]:
+        data = urllib.parse.urlencode(form).encode("utf-8")
+        req = urllib.request.Request(
+            f"{SPOTIFY_ACCOUNTS}/api/token",
+            data=data,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            payload = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"Spotify token request failed ({exc.code}): {payload}") from exc
+
+    def _refresh_access_token(self) -> bool:
+        refresh_token = self._token.get("refresh_token")
+        if not refresh_token or not self.client_id:
+            return False
+        payload = self._token_request(
+            {
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+                "client_id": self.client_id,
+            }
+        )
+        with self._lock:
+            self._token.update(payload)
+            self._token["obtained_at"] = time.time()
+            self._save_token()
+        return True
+
+    def _access_token(self) -> Optional[str]:
+        token = self._token.get("access_token")
+        if not token:
+            return None
+        expires_at = float(self._token.get("obtained_at", 0.0)) + float(
+            self._token.get("expires_in", 0)
+        )
+        if expires_at and time.time() >= expires_at - 60:
+            try:
+                if self._refresh_access_token():
+                    token = self._token.get("access_token")
+            except Exception:
+                return None
+        return token
+
+    def _api_get(self, path: str) -> tuple[int, Optional[dict[str, Any]]]:
+        token = self._access_token()
+        if not token:
+            return 401, None
+        req = urllib.request.Request(
+            f"{SPOTIFY_API}{path}",
+            headers={"Authorization": f"Bearer {token}"},
+            method="GET",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as response:
+                if response.status == 204:
+                    return 204, None
+                data = response.read().decode("utf-8")
+                return response.status, json.loads(data) if data else None
+        except urllib.error.HTTPError as exc:
+            if exc.code == 401:
+                return 401, None
+            if exc.code == 204:
+                return 204, None
+            if exc.code == 429:
+                return 429, None
+            try:
+                payload = json.loads(exc.read().decode("utf-8"))
+            except Exception:
+                payload = None
+            return exc.code, payload
+        except urllib.error.URLError:
+            return 0, None
+
+    def get_current_playback(self, force: bool = False) -> SpotifyPlayback:
+        now = time.monotonic()
+        with self._lock:
+            if (
+                not force
+                and self._cached_playback is not None
+                and (now - self._cached_at) < 1.0
+            ):
+                return self._cached_playback
+
+        status, payload = self._api_get("/me/player")
+        playback = self._parse_playback(payload) if status == 200 and payload else SpotifyPlayback()
+        with self._lock:
+            self._cached_playback = playback
+            self._cached_at = now
+        return playback
+
+    @staticmethod
+    def _parse_playback(payload: dict[str, Any]) -> SpotifyPlayback:
+        item = payload.get("item") or {}
+        artists = item.get("artists") or []
+        device = payload.get("device") or {}
+        return SpotifyPlayback(
+            is_playing=bool(payload.get("is_playing")),
+            track_id=str(item.get("id") or ""),
+            track_name=str(item.get("name") or ""),
+            artist_names=tuple(str(a.get("name") or "") for a in artists if a.get("name")),
+            album_name=str((item.get("album") or {}).get("name") or ""),
+            progress_ms=int(payload.get("progress_ms") or 0),
+            duration_ms=int(item.get("duration_ms") or 0),
+            device_name=str(device.get("name") or ""),
+            device_type=str(device.get("type") or ""),
+            item_type=str(item.get("type") or "track"),
+            fetched_at=time.monotonic(),
+        )
+
+    def export_debug_snapshot(self) -> dict[str, Any]:
+        playback = self.get_current_playback()
+        return asdict(playback)
+
+
+__all__ = ["SpotifyContext", "SpotifyPlayback", "DEFAULT_REDIRECT_URI", "DEFAULT_SCOPES"]
