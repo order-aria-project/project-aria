@@ -13,7 +13,7 @@ from voice.speech_listener import SpeechListener
 
 def main() -> None:
     listener = SpeechListener(
-        listen_seconds=5.0,
+        max_listen_seconds=5.0,
     )
 
     print()
@@ -28,7 +28,10 @@ def main() -> None:
             text = listener.listen_once()
 
             if text:
-                print(f"HEARD > {text}")
+                print(
+                    f"HEARD > {text}",
+                    flush=True,
+                )
 
     except KeyboardInterrupt:
         print("\nWhisper test stopped.")

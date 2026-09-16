@@ -1,4 +1,77 @@
 {
-    "blender": "C:\\Program Files\\Blender Foundation\\Blender 5.2\\blender.exe",
-    "fake_app": "C:\\Definitely\\Does\\Not\\Exist\\fake.exe"
+    "applications": {
+        "blender": {
+            "executable": "C:\\Program Files\\Blender Foundation\\Blender 5.2\\blender.exe",
+            "aliases": [
+                "blender"
+            ],
+            "type": "exe"
+        },
+        "brave": {
+            "executable": "C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe",
+            "aliases": [
+                "brave",
+                "brave browser"
+            ],
+            "type": "exe"
+        },
+        "robloxplayerbeta": {
+            "executable": "C:\\Users\\Order\\Downloads\\WEAO-LIVE-WindowsPlayer-version-f5a60436d48947d3\\RobloxPlayerBeta.exe",
+            "aliases": [
+                "roblox",
+                "robloxplayerbeta"
+            ],
+            "type": "exe"
+        },
+        "discord": {
+            "executable": "C:\\Users\\Order\\AppData\\Local\\Discord\\app-1.0.9257\\Discord.exe",
+            "aliases": [
+                "discord"
+            ],
+            "type": "exe"
+        },
+        "obs64": {
+            "executable": "C:\\Program Files\\obs-studio\\bin\\64bit\\obs64.exe",
+            "aliases": [
+                "obs studio",
+                "obs64"
+            ],
+            "type": "exe"
+        },
+        "snipping tool": {
+            "type": "windows_app",
+            "app_id": "Microsoft.ScreenSketch_8wekyb3d8bbwe!App",
+            "aliases": [
+                "snipping tool"
+            ]
+        },
+        "steam": {
+            "type": "windows_app",
+            "app_id": "{7C5A40EF-A0FB-4BFC-874A-C0F2E0B9FA8E}\\Steam\\Steam.exe",
+            "aliases": [
+                "steam"
+            ]
+        },
+        "notepad": {
+            "type": "windows_app",
+            "app_id": "Microsoft.WindowsNotepad_8wekyb3d8bbwe!App",
+            "aliases": [
+                "notepad"
+            ]
+        },
+        "epic games launcher": {
+            "type": "windows_app",
+            "app_id": "{6D809377-6AF0-444B-8957-A3773F02200E}\\Epic Games\\Launcher\\Portal\\Binaries\\Win64\\EpicGamesLauncher.exe",
+            "aliases": [
+                "epic games launcher"
+            ]
+        },
+        "ea": {
+            "type": "windows_app",
+            "app_id": "ElectronicArts.EADesktop",
+            "aliases": [
+                "ea"
+            ]
+        }
+    }
 }

@@ -14,16 +14,16 @@ class MicrophoneDevice:
 
 class MicrophoneManager:
     """
-    Chooses the best available microphone for ARIA.
+    Selects and locks ARIA's preferred microphone.
 
-    Preferred device:
-        Razer BlackShark V3 X
+    ARIA prefers the Razer BlackShark microphone. The laptop
+    microphone is only used as a fallback when the BlackShark
+    cannot actually be opened.
 
-    Fallback:
-        Laptop internal microphone array
-
-    The manager does not permanently depend on a microphone index.
-    It searches by device name each time it needs to choose an input.
+    Once a device has been selected, get_locked_device() keeps
+    returning that same device until release_lock() is called.
+    This prevents ARIA from silently changing microphones in the
+    middle of a conversation.
     """
 
     PREFERRED_KEYWORDS = (
@@ -55,14 +55,12 @@ class MicrophoneManager:
             or self.LAPTOP_KEYWORDS
         )
 
-    def list_devices(self) -> list[MicrophoneDevice]:
-        devices: list[
-            MicrophoneDevice
-        ] = []
+        self._locked_device: Optional[MicrophoneDevice] = None
 
-        names = (
-            sr.Microphone.list_microphone_names()
-        )
+    def list_devices(self) -> list[MicrophoneDevice]:
+        devices: list[MicrophoneDevice] = []
+
+        names = sr.Microphone.list_microphone_names()
 
         for index, name in enumerate(names):
             devices.append(
@@ -102,28 +100,13 @@ class MicrophoneManager:
 
         return None
 
-    def select_device(
-        self,
-    ) -> MicrophoneDevice:
-        """
-        Select the preferred headset microphone when available.
-
-        Otherwise select the laptop microphone array.
-
-        Raises:
-            RuntimeError: when neither microphone can be found.
-        """
-
-        preferred = (
-            self.find_preferred_device()
-        )
+    def select_device(self) -> MicrophoneDevice:
+        preferred = self.find_preferred_device()
 
         if preferred is not None:
             return preferred
 
-        fallback = (
-            self.find_laptop_device()
-        )
+        fallback = self.find_laptop_device()
 
         if fallback is not None:
             return fallback
@@ -134,41 +117,10 @@ class MicrophoneManager:
             "the laptop microphone."
         )
 
-    def create_microphone(
-        self,
-    ) -> sr.Microphone:
-        device = self.select_device()
-
-        return sr.Microphone(
-            device_index=device.index
-        )
-
-    def get_selected_device(
-        self,
-    ) -> MicrophoneDevice:
-        return self.select_device()
-
-    def describe_selected_device(
-        self,
-    ) -> str:
-        device = self.select_device()
-
-        return (
-            f"{device.name} "
-            f"(device index {device.index})"
-        )
-
     def test_device(
         self,
         device: MicrophoneDevice,
     ) -> bool:
-        """
-        Open the microphone once to verify that the
-        selected Windows audio input is actually usable.
-
-        Returns True when the device can be opened.
-        """
-
         try:
             microphone = sr.Microphone(
                 device_index=device.index
@@ -186,21 +138,19 @@ class MicrophoneManager:
         self,
     ) -> MicrophoneDevice:
         """
-        Prefer the BlackShark when it can actually be opened.
-        Fall back to the laptop microphone if necessary.
+        Prefer BlackShark when it can be opened.
+
+        This performs the fallback decision once. It does not keep
+        switching devices during later speech captures.
         """
 
-        preferred = (
-            self.find_preferred_device()
-        )
+        preferred = self.find_preferred_device()
 
         if preferred is not None:
             if self.test_device(preferred):
                 return preferred
 
-        fallback = (
-            self.find_laptop_device()
-        )
+        fallback = self.find_laptop_device()
 
         if fallback is not None:
             if self.test_device(fallback):
@@ -209,4 +159,41 @@ class MicrophoneManager:
         raise RuntimeError(
             "ARIA found microphone devices, but "
             "could not open a working microphone."
+        )
+
+    def get_locked_device(self) -> MicrophoneDevice:
+        """
+        Return one stable microphone for the whole ARIA session.
+        """
+
+        if self._locked_device is None:
+            self._locked_device = (
+                self.get_working_device()
+            )
+
+        return self._locked_device
+
+    def release_lock(self) -> None:
+        self._locked_device = None
+
+    def create_microphone(self) -> sr.Microphone:
+        device = self.get_locked_device()
+
+        return sr.Microphone(
+            device_index=device.index
+        )
+
+    def get_selected_device(
+        self,
+    ) -> MicrophoneDevice:
+        return self.get_locked_device()
+
+    def describe_selected_device(
+        self,
+    ) -> str:
+        device = self.get_locked_device()
+
+        return (
+            f"{device.name} "
+            f"(device index {device.index})"
         )

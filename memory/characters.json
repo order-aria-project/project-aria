@@ -1,0 +1,105 @@
+{
+  "version": 1,
+  "updated_at": "2026-09-15T00:27:28",
+  "profiles": {
+    "gracie": {
+      "name": "gracie",
+      "aliases": [],
+      "relationship": "girlfriend",
+      "traits": [],
+      "preferences": [
+        "iced coffee"
+      ],
+      "dislikes": [],
+      "interests": [
+        "iced coffee"
+      ],
+      "important_facts": [
+        "has three cats",
+        "one cat is named Piggler",
+        "one cat is named Mouse",
+        "one cat is named Goose",
+        "Mouse and Piggler are kittens"
+      ],
+      "observations": [
+        {
+          "source": "my girlfriend's name is gracie and she loves iced coffee",
+          "first_seen": "2026-09-14T22:18:42",
+          "last_seen": "2026-09-14T22:40:56",
+          "count": 2
+        },
+        {
+          "source": "what do you remember about gracie",
+          "first_seen": "2026-09-14T22:19:25",
+          "last_seen": "2026-09-14T22:21:47",
+          "count": 2
+        },
+        {
+          "source": "my girlfriend gracie recently brought two kittens one named mouse and one named piglet",
+          "first_seen": "2026-09-14T23:53:38",
+          "last_seen": "2026-09-14T23:53:38",
+          "count": 1
+        },
+        {
+          "source": "no she has three cats one named piggler one named mouse and another one named goose but mouse and piggler are kittens",
+          "first_seen": "2026-09-15T00:27:28",
+          "last_seen": "2026-09-15T00:27:28",
+          "count": 1
+        }
+      ],
+      "contradictions": [],
+      "interaction_count": 6,
+      "confidence": 0.61,
+      "first_seen": "2026-09-14T22:18:42",
+      "last_seen": "2026-09-15T00:27:28",
+      "created_at": "2026-09-14T22:18:42",
+      "updated_at": "2026-09-15T00:27:28"
+    },
+    "she": {
+      "name": "she",
+      "aliases": [],
+      "relationship": "",
+      "traits": [
+        "beautiful"
+      ],
+      "preferences": [],
+      "dislikes": [],
+      "interests": [
+        "flowers",
+        "Christmas"
+      ],
+      "important_facts": [
+        "blonde",
+        "15 years old",
+        "birthday is the 6th of may 2011"
+      ],
+      "observations": [
+        {
+          "source": "she also has three cats she loves flowers getting flowers for like her birthday and from me randomly and stuff she loves christmas",
+          "first_seen": "2026-09-14T22:22:11",
+          "last_seen": "2026-09-14T22:22:11",
+          "count": 1
+        },
+        {
+          "source": "yeah she is blonde and she is very beautiful she is 15",
+          "first_seen": "2026-09-14T22:22:43",
+          "last_seen": "2026-09-14T22:22:43",
+          "count": 1
+        },
+        {
+          "source": "she her birthday is the 6th of may 2011 like that was that was when she was born on her birthdays",
+          "first_seen": "2026-09-14T22:23:03",
+          "last_seen": "2026-09-14T22:23:03",
+          "count": 1
+        }
+      ],
+      "contradictions": [],
+      "interaction_count": 3,
+      "confidence": 0.43,
+      "first_seen": "2026-09-14T22:22:11",
+      "last_seen": "2026-09-14T22:23:03",
+      "created_at": "2026-09-14T22:22:11",
+      "updated_at": "2026-09-14T22:23:03"
+    }
+  }
+}

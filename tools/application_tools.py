@@ -1,20 +1,58 @@
+from __future__ import annotations
+
 from core.app_registry import AppRegistry
 from automation.app_launcher import ApplicationLauncher
+from automation.app_closer import ApplicationCloser
 
 
 class ApplicationTools:
-    """Safe application-control tools exposed to ARIA."""
+    """
+    Safe application-control tools exposed to ARIA.
+    """
 
-    def __init__(self, registry: AppRegistry) -> None:
-        self.launcher = ApplicationLauncher(registry)
+    def __init__(
+        self,
+        registry: AppRegistry,
+    ) -> None:
+        self.launcher = ApplicationLauncher(
+            registry
+        )
 
-    def launch(self, app_name: str) -> str:
+        self.closer = ApplicationCloser(
+            registry
+        )
+
+    def launch(
+        self,
+        app_name: str,
+    ) -> str:
         """
-        Launch a registered application.
+        Launch an application.
 
-        The launcher returns the authoritative launch status.
-        ARIA should not perform a second verification step because
-        applications such as Blender may take time to initialize
-        or temporarily appear unresponsive during startup.
+        The launcher handles remembered applications,
+        Windows discovery, and authoritative status.
         """
-        return self.launcher.launch(app_name)
+        return self.launcher.launch(
+            app_name
+        )
+
+    def open(
+        self,
+        app_name: str,
+    ) -> str:
+        """Alias for launch()."""
+        return self.launch(
+            app_name
+        )
+
+    def close(
+        self,
+        app_name: str,
+    ) -> str:
+        """
+        Close an application without opening
+        Task Manager or another visible helper UI.
+        """
+        return self.closer.close(
+            app_name
+        )

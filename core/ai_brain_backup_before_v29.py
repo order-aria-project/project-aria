@@ -5,7 +5,6 @@ import re
 from typing import Any, Callable
 
 from ollama import chat
-
 from memory.character_memory import CharacterMemory
 
 
@@ -27,6 +26,8 @@ class AIBrain:
 
     def __init__(self, model: str = "qwen2.5:7b") -> None:
         self.model = model
+        self.character_memory = CharacterMemory()
+        self._guest_mode = False
 
         self.system_prompt = r"""
 You are A.R.I.A. — Adaptive Reasoning & Intelligent Assistant.
@@ -104,15 +105,32 @@ Do not call a microphone-control tool.
 8. CHARACTER MEMORY
 ARIA has persistent local memory for people Beau talks about.
 
-When Beau explicitly tells you durable information about a person, remember it.
-Examples:
+Only remember information that is:
+- explicitly stated by Beau;
+- useful beyond the immediate sentence;
+- reasonably durable;
+- relevant to understanding that person later.
+
+Good examples:
 - "Gracie is my girlfriend."
 - "James works with me."
 - "Sarah loves drawing."
 - "Tom hates coffee."
 - "Emily has started learning Blender."
+- "I call Samantha Sam."
+- "Josh is helping me with the ARIA project."
 
-Use remembered information naturally when that person is relevant.
+Do NOT treat every mention of a person as something worth remembering.
+
+Do NOT create or update a person profile merely because:
+- the person's name was mentioned;
+- Beau asked a question about that person;
+- Beau asked what ARIA remembers about them;
+- Beau asked who they are;
+- Beau said hello to them;
+- Beau mentioned seeing them once;
+- Beau referred to them in a temporary situation with no durable information.
+
 Do not invent facts, biography, motives, relationships, or sensitive attributes.
 Do not treat a guess as a fact.
 Do not silently erase previous observations when a new statement changes them.
@@ -133,20 +151,9 @@ A wrong confident action is worse than a brief clarification.
 When evidence is weak, say so.
 "Memory" means previously observed information, not guaranteed truth.
 "Confidence" should never be treated as certainty.
-
-12. RESPONSE STYLE
-- Answer the user's request directly and then stop.
-- Do NOT append "Would you like...", "Anything else?", "Is there anything else you need help with?",
-  "Do you need anything else?", or similar follow-up offers.
-- Do NOT ask a follow-up question after a successful simple request.
-- Do NOT add conversational filler merely to keep the conversation going.
-- For a factual question, give the answer and stop.
-- For a completed action, briefly state the result and stop.
-- Ask a question only when the user's request is genuinely ambiguous, unsafe,
-  or requires information that is actually missing.
 """
 
-    guest_system_prompt = r"""
+        self.guest_system_prompt = r"""
 You are A.R.I.A. in GUEST MODE.
 
 Guest Mode is public-facing and privacy-restricted.
@@ -166,14 +173,154 @@ Guest Mode is public-facing and privacy-restricted.
 """
 
     def set_guest_mode(self, enabled: bool) -> None:
-        if enabled:
-            self.system_prompt = self.guest_system_prompt
-        else:
-            self.system_prompt = self.system_prompt
+        self._guest_mode = bool(enabled)
+
+    def is_guest_mode(self) -> bool:
+        return self._guest_mode
 
     # ------------------------------------------------------------------
     # CHARACTER MEMORY — INTERNAL LEARNING
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _is_memory_query(text: str) -> bool:
+        """
+        Return True when the user is asking about existing memory rather than
+        providing new information to remember.
+        """
+        normalized = re.sub(
+            r"\s+",
+            " ",
+            str(text or "").strip().lower(),
+        )
+
+        if not normalized:
+            return True
+
+        query_patterns = (
+            r"\bwhat do you remember\b",
+            r"\bwhat do you know\b",
+            r"\btell me about\b",
+            r"\bwhat can you tell me about\b",
+            r"\bdo you remember\b",
+            r"\bdo you know\b",
+            r"\bwho is\b",
+            r"\bwho's\b",
+            r"\bwho was\b",
+            r"\bwhat is\b",
+            r"\bwhat's\b",
+            r"\bwhat was\b",
+            r"\banything about\b",
+            r"\banything you remember\b",
+            r"\bwhat have you learned\b",
+            r"\bwhat have you saved\b",
+            r"\bwhat have you stored\b",
+        )
+
+        return any(
+            re.search(
+                pattern,
+                normalized,
+            )
+            for pattern in query_patterns
+        )
+
+    @staticmethod
+    def _has_learning_signal(text: str) -> bool:
+        """
+        Cheap first-pass filter.
+
+        Character extraction is only needed when the message contains language
+        that plausibly introduces durable information.
+        """
+        normalized = re.sub(
+            r"\s+",
+            " ",
+            str(text or "").strip().lower(),
+        )
+
+        if not normalized:
+            return False
+
+        learning_patterns = (
+            r"\bmy (girlfriend|boyfriend|partner|wife|husband|friend|brother|sister|mum|mom|dad|father|mother|son|daughter|boss|manager|coworker|co-worker|colleague)\b",
+            r"\bis my\b",
+            r"\bare my\b",
+            r"\bworks? (at|for|with)\b",
+            r"\bworked? (at|for|with)\b",
+            r"\blives? (in|at|near)\b",
+            r"\bfrom\b",
+            r"\bcalled\b",
+            r"\bknown as\b",
+            r"\bnamed\b",
+            r"\bname is\b",
+            r"\bi call\b",
+            r"\bwe call\b",
+            r"\b(loves?|likes?|hates?|dislikes?|prefers?)\b",
+            r"\b(enjoys?|avoids?|uses?|plays?|works on|studies?|learns?|learning)\b",
+            r"\b(started|began|joined|left|moved|works|worked)\b",
+            r"\b(helps?|helped?) me\b",
+            r"\bhelping me\b",
+            r"\bknows? me\b",
+            r"\bmet\b",
+        )
+
+        return any(
+            re.search(
+                pattern,
+                normalized,
+            )
+            for pattern in learning_patterns
+        )
+
+    @staticmethod
+    def _has_useful_person_data(person: dict[str, Any]) -> bool:
+        """
+        Prevent saving a profile when the model returned only a person's name.
+        """
+        relationship = str(
+            person.get(
+                "relationship",
+                "",
+            )
+            or ""
+        ).strip()
+
+        if relationship:
+            return True
+
+        fields = (
+            "aliases",
+            "traits",
+            "preferences",
+            "dislikes",
+            "interests",
+            "facts",
+            "notes",
+        )
+
+        for field in fields:
+            value = person.get(
+                field,
+                [],
+            )
+
+            if isinstance(
+                value,
+                str,
+            ):
+                if value.strip():
+                    return True
+
+            elif isinstance(
+                value,
+                list,
+            ):
+                for item in value:
+                    if str(item).strip():
+                        return True
+
+        return False
 
     def _learn_characters(
         self,
@@ -197,10 +344,25 @@ Guest Mode is public-facing and privacy-restricted.
         if not latest_user:
             return
 
+        # Questions about existing memory must never become new memory.
+        if self._is_memory_query(
+            latest_user
+        ):
+            return
+
+        # Ignore ordinary conversation unless there is a plausible signal that
+        # durable information is actually being provided.
+        if not self._has_learning_signal(
+            latest_user
+        ):
+            return
+
         extraction_prompt = r"""
-Extract persistent character information from Beau's message.
+Extract only genuinely useful, durable character information from Beau's
+message.
 
 Return ONLY valid JSON in this exact shape:
+
 {
   "people": [
     {
@@ -218,17 +380,25 @@ Return ONLY valid JSON in this exact shape:
 }
 
 Rules:
+
 - Only include real people explicitly identifiable from the message.
+- The person must have at least one genuinely useful piece of information.
+- A person's name appearing in the sentence is NOT enough.
+- Do not create a profile from a temporary mention.
+- Do not create a profile from a question about the person.
 - Only record information explicitly stated or strongly established by the
   message. Never invent missing information.
 - "Gracie is my girlfriend" means relationship="girlfriend".
 - "Gracie loves drawing" means preferences or interests may contain "drawing".
 - "Gracie hates coffee" means dislikes may contain "coffee".
 - "James works with me" is an important fact.
-- A person being merely mentioned is NOT enough to create a profile.
+- "I call Samantha Sam" is an alias.
+- "Josh is helping me with the ARIA project" is a useful relationship/context
+  fact.
+- "I saw Gracie yesterday" by itself is NOT durable enough to remember.
+- "Gracie was at my house yesterday" by itself is NOT durable enough to remember.
 - Do not infer age, sexuality, religion, politics, medical information,
-  ethnicity, or other sensitive attributes unless the user explicitly states
-  them and they are genuinely necessary to understand the relationship.
+  ethnicity, or other sensitive attributes.
 - Do not turn opinions into objective facts.
 - Keep each item short and faithful to the user's wording.
 - Return an empty people list when there is nothing durable to remember.
@@ -264,9 +434,14 @@ Rules:
             if not raw:
                 return
 
-            data = json.loads(raw)
+            data = json.loads(
+                raw
+            )
 
-            if not isinstance(data, dict):
+            if not isinstance(
+                data,
+                dict,
+            ):
                 return
 
             people = data.get(
@@ -274,11 +449,13 @@ Rules:
                 [],
             )
 
-            if not isinstance(people, list):
+            if not isinstance(
+                people,
+                list,
+            ):
                 return
 
             for person in people:
-
                 if not isinstance(
                     person,
                     dict,
@@ -293,6 +470,12 @@ Rules:
                 ).strip()
 
                 if not name:
+                    continue
+
+                # Never save a profile containing only a person's name.
+                if not self._has_useful_person_data(
+                    person
+                ):
                     continue
 
                 self.character_memory.remember_person(
@@ -413,39 +596,13 @@ Rules:
             return self.character_memory.context_for_text(
                 latest_user
             )
+
         except Exception as exc:
             print(
                 f"[CHARACTER MEMORY] Context skipped: {exc}",
                 flush=True,
             )
             return ""
-
-    # ------------------------------------------------------------------
-    # RESPONSE CLEANUP
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _remove_follow_up_offer(text: str) -> str:
-        """Remove only the common conversational follow-up offers.
-
-        Genuine clarification questions are preserved because this cleanup only
-        targets optional offers that invite the user to continue after a
-        successful answer/action.
-        """
-        value = str(text or "").strip()
-        if not value:
-            return value
-
-        patterns = (
-            r"\s*(?:Would you like(?: more information(?: on [^?]+)?| anything else)?|Anything else(?: you need(?: help with)?)?|Is there anything else(?: you need(?: help with)?)?|Do you need anything else(?: help)?|Let me know if you need (?:any more|more|further) assistance|Let me know if you need anything else)[.!?]*\s*$",
-            r"\s*Would you like more information on [^?]+\?\s*$",
-        )
-
-        cleaned = value
-        for pattern in patterns:
-            cleaned = re.sub(pattern, "", cleaned, flags=re.IGNORECASE).rstrip()
-
-        return cleaned
 
     # ------------------------------------------------------------------
     # REASONING
@@ -455,15 +612,28 @@ Rules:
         self,
         messages: list[dict[str, Any]],
         tools: list[Callable[..., Any]] | None = None,
-        guest_mode: bool = False,
+        guest_mode: bool | None = None,
     ) -> Any:
+
+        if guest_mode is None:
+            guest_mode = self._guest_mode
+        else:
+            guest_mode = bool(guest_mode)
+            self._guest_mode = guest_mode
 
         latest_user = ""
 
-        for message in reversed(messages):
-            if message.get("role") == "user":
+        for message in reversed(
+            messages
+        ):
+            if message.get(
+                "role"
+            ) == "user":
                 latest_user = str(
-                    message.get("content", "")
+                    message.get(
+                        "content",
+                        "",
+                    )
                 )
                 break
 
@@ -502,7 +672,7 @@ Rules:
             *messages,
         ]
 
-        result = chat(
+        return chat(
             model=self.model,
             messages=full_messages,
             tools=tools or [],
@@ -513,10 +683,3 @@ Rules:
             },
             keep_alive=-1,
         )
-
-        if getattr(result.message, "content", None):
-            result.message.content = self._remove_follow_up_offer(
-                result.message.content
-            )
-
-        return result
